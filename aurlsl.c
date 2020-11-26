@@ -1,66 +1,70 @@
-
-// total is block usage of listed files
-
 // ls -l
+
+// total is 1K block usage of listed files
 // - file d directory l link, etc etc
 // file_permissions(owner-group-everyone)
 // number of links
 // owner
 // group
 // size
-// modification date: month-day[-year] time
+// modification date: month day [year | time]
 // filename
 
+#include <ctype.h>
 #include <stdio.h>
 #include <dirent.h>
 #include <limits.h>
 
 #include <sys/stat.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include <pwd.h>
 #include <grp.h>
 
-void fmode_symbol(mode_t st_mode, char *ftype)
+char fmode_symbol(mode_t st_mode)
 {
+	char mode;
 
 	switch (st_mode & S_IFMT) {
 
 		case S_IFLNK:
-				*ftype = 'l';	// link
+				mode = 'l';	// link
 			break;
 
 		case S_IFDIR:
-				*ftype = 'd';	// directory
+				mode = 'd';	// directory
 			break;
 				
 		case S_IFREG:
-				*ftype = '-';	// file
+				mode = '-';	// regular file
 			break;
 		
 		case S_IFSOCK:
-				*ftype = 's';	// socket
+				mode = 's';	// socket
 			break;
 		
 		case S_IFBLK:
-				*ftype = 'b';	// block dev
+				mode = 'b';	// block dev
 			break;
 
 		case S_IFCHR:
-				*ftype = 'c';	// char dev
+				mode = 'c';	// char dev
 			break;
 
 		case S_IFIFO:
-				*ftype = 'p';	// fifo, pipe
+				mode = 'p';	// fifo, pipe
 			break;
 
 		default:
-				*ftype = '?';
+				mode = '?';
 	}
+
+	return mode;
 }
 
-int	fill_permis(mode_t st_mode, char *permbuf)
+int	file_permis(mode_t st_mode, char *permbuf)
 {
 	permbuf[0] = (st_mode & S_IRUSR)? 'r' : '-';
 	permbuf[1] = (st_mode & S_IWUSR)? 'w' : '-';
@@ -77,35 +81,148 @@ int	fill_permis(mode_t st_mode, char *permbuf)
 	permbuf[9] = 0;
 }
 
-#define	SIX_MONTHS	(6*30*86400)
-void filetime(time_t *filetime)
+#define	SIX_MONTHS	(6*30*86400.0)
+#define	PBUFLEN	160
+char	pbuf[PBUFLEN];
+int 	pblen = 0;
+
+void print_file_time(time_t *filetime)
 {
 	struct tm *ftime;
-	char buffer[200];
 	
 	ftime = localtime(filetime);
 
 	if (difftime(time(NULL), *filetime) > SIX_MONTHS) {
-		strftime(buffer, sizeof(buffer), "%b %d %Y", ftime);
+		pblen += strftime(pbuf+pblen, PBUFLEN-pblen, "%b %d %Y", ftime);
 	} else {
-		strftime(buffer, sizeof(buffer), "%b %d %H:%M", ftime);
+		pblen += strftime(pbuf+pblen, PBUFLEN-pblen, "%b %d %H:%M", ftime);
+	}
+}
+
+void print_file_stats(struct stat *file_attr, char *fname)
+{
+	char attrbuf[16];
+
+	attrbuf[0] = fmode_symbol(file_attr->st_mode);
+	file_permis(file_attr->st_mode, &attrbuf[1]);
+	pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%s ", attrbuf);
+
+	pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%2ld ", file_attr->st_nlink);	// number of links
+
+	{
+		struct passwd *uname = getpwuid(file_attr->st_uid);
+		struct group *gname = getgrgid(file_attr->st_gid);
+		
+		if (uname) {
+			pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%s ", uname->pw_name);
+		} else {
+			pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%d ", file_attr->st_uid);	// user
+		}
+
+		if (gname) {
+			pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%s ", gname->gr_name);
+		} else {
+			pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "%d ", file_attr->st_gid);	// group
+		}
 	}
 
-	printf("%s\t", buffer);
+	pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, " %8ld ", file_attr->st_size);	// size
+
+	print_file_time(&file_attr->st_mtime);
+
+	pblen += snprintf(pbuf+pblen, PBUFLEN-pblen, "\t%s", fname);
+}
+
+typedef struct lpout_s {
+	struct lpout_s *next;
+	char	*lpbuf;
+	char	*key;
+} lpout_t;
+
+lpout_t	*lpout_start = NULL;
+
+char	*str2lower(char *str, int strlen)
+{
+	int i;
+
+	for (i=0; (i<strlen) && (str[i]); i++) {
+		str[i] = (char)tolower(str[i]);
+	}
+
+	return str;
+}
+
+void	lpout_add(char *lpbuf, char *key)
+{
+	lpout_t *pnew, *p, *pp;
+
+	pnew = malloc(sizeof(lpout_t));
+
+	if (!pnew)
+		return;
+
+	pnew->key = malloc(strlen(key)+1);
+	if (pnew->key)
+		strcpy(pnew->key, key);
+
+	pnew->lpbuf = malloc(strlen(lpbuf)+1);
+	if (pnew->lpbuf)
+		strcpy(pnew->lpbuf, lpbuf);
+
+	if (!lpout_start) {	// empty list, create element
+		lpout_start = pnew;
+		pnew->next = NULL;
+		return;
+	}
+
+	p = lpout_start;	// start iterating
+
+	if (strcmp(pnew->key, p->key) < 0) {	// < than head, insert at start
+		pnew->next = lpout_start;
+		lpout_start = pnew;
+		return;
+	}
+
+	do {
+		pp = p;
+		p = p->next;
+	} while ((p) && (strcmp(pnew->key, p->key) > 0));	// until > or end of list
+
+	pp->next = pnew;
+	pnew->next = p;
+
+}
+
+void	lpout_print(void)
+{
+	lpout_t *p = lpout_start, *np;
+
+	while (p) {
+		printf("%s\n", p->lpbuf);
+
+		np = p->next;
+
+		// free() nodes that already been printed
+		free(p->key);
+		free(p->lpbuf);
+		free(p);
+
+		p = np;
+	}
 }
 
 int main(int argc, char *argv[])
 {
 	DIR *curdir;
+
 	struct dirent *rec;
     struct stat file_attr;
-	int total = 0;
+
+	int bltotal = 0;
 
 	char dirname[PATH_MAX] = "./";
-	char fname[NAME_MAX];
 	int	dnamelen;
-
-	char attrbuf[16];
+	char fname[NAME_MAX];
 
 	if (argc > 1) {	// dirname in argv[1]
 		strncpy(dirname, argv[1], sizeof dirname);
@@ -115,7 +232,7 @@ int main(int argc, char *argv[])
 
 	if ((dnamelen > 0) && (dnamelen < (sizeof dirname)-2) && (dirname[dnamelen-1] != '/')) {
 		
-		dirname[dnamelen++] = '/';
+		dirname[dnamelen++] = '/';		// append trailing '/' if missed
 		dirname[dnamelen] = 0;
 	}
 
@@ -134,53 +251,20 @@ int main(int argc, char *argv[])
 			    	continue;
 			    }
 
-			    fmode_symbol(file_attr.st_mode, attrbuf);
-			    fill_permis(file_attr.st_mode, &attrbuf[1]);
+			    pblen = 0;
+				print_file_stats(&file_attr, rec->d_name);
 
-			    printf("%s\t", attrbuf);
-
-			    // printf("%x\t", file_attr.st_mode);
-
-				printf("%ld\t", file_attr.st_nlink);	// number of links
-
-				{
-					struct passwd *uname = getpwuid(file_attr.st_uid);
-					struct group *gname = getgrgid(file_attr.st_gid);
-					
-					if (uname) {
-						printf("%s\t", uname->pw_name);
-					} else {
-						printf("%d\t", file_attr.st_uid);	// user
-					}
-
-					if (gname) {
-						printf("%s\t", gname->gr_name);
-					} else {
-						printf("%d\t", file_attr.st_gid);	// group
-					}
-				}
-
-				printf("%8ld\t", file_attr.st_size);	// size
-
-				// printf("%ld\t", file_attr.st_mtime);	// modified time
-				filetime(&file_attr.st_mtime);
-
-				// printf("%ld\t", file_attr.st_blksize);
-
-				printf("%s\n", rec->d_name);	// name
-
-				total +=  file_attr.st_blocks;
-				
-				/*
-				if ((file_attr.st_mode & S_IFMT) == S_IFREG) {
-					total +=  file_attr.st_blocks;
-					printf("%d\n", total);
-				}*/
-
-				
+				// printf("%s\n", pbuf);
+				lpout_add(pbuf, str2lower(rec->d_name, strlen(rec->d_name)));
+				bltotal +=  file_attr.st_blocks;
+								
 			}
 		}
-		printf("total %d\n", total/2);	// blocks are 512B, ls counts 1K blocks
+		printf("total %d\n", bltotal/2);	// blocks are 512B, ls counts 1K blocks
+		lpout_print();
+
+	} else {
+		// try file name as parameter
 	}
 
 	return !curdir;

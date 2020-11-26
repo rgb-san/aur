@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef struct list_s {
 
@@ -30,7 +32,7 @@ int count_list_items2(const list_t *head)
 /* Inserts a new list item after the one specified as the argument.	 */
 
 void insert_next_to_list(list_t *item, int data) {
-	(item->next = malloc(sizeof(list_t)))->next = item->next;	// what if malloc fails, item->next overwritten
+	(item->next = malloc(sizeof(list_t)))->next = item->next;	// what if malloc fails; item->next overwritten
 	item->next->data = data;
 }
 
@@ -74,7 +76,7 @@ char *item_data(const list_t *list)
 {
 	char buf[12];
 
-	sprintf(buf, "%d", list->data);	// null termination by sprintf+; why size is assumed to be <12
+	sprintf(buf, "%d", list->data);	// why size is assumed to be <12
 	return buf;						// buf[12] on stack, destroyed on return
 }
 

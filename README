@@ -1,2 +1,11 @@
 Auriga test 26.11.20
-Need to add sorting to alsl
+
+Added string sorting to alsl alike ls -l
+
+Skipped
+	Link symbol -> resolving
+	System locale in date time
+	File name as parameter
+	Multiple parameters
+
+git clone https://github.com/rgb-san/aur
